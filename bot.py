@@ -1,163 +1,132 @@
 import os
 import logging
 import threading
-import yt_dlp
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
-from telegram.constants import ParseMode
+import asyncio
 import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+import yt_dlp
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ParseMode
+
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-PORT = int(os.environ.get("PORT", 8080))
+PORT = int(os.environ.get("PORT", 10000))
 DOWNLOAD_DIR = "/tmp/videos"
-MAX_FILE_SIZE_MB = 50
-
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
-# Web server بسيط لإبقاء Render سعيداً
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is running!")
-    def log_message(self, format, *args):
-        pass  # إخفاء logs الـ HTTP
-
-def run_web_server():
-    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
-    server.serve_forever()
+        self.wfile.write(b"OK")
+    def log_message(self, *args):
+        pass
 
 
-def is_valid_url(text: str) -> bool:
-    return bool(re.match(r"^https?://\S+$", text.strip(), re.IGNORECASE))
+def is_valid_url(text):
+    return bool(re.match(r"^https?://\S+$", text.strip()))
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"👋 أهلاً {user.first_name}!\n\n"
-        "🎬 *بوت تنزيل الفيديو*\n\n"
-        "أرسل رابط أي فيديو وسأنزله لك!\n\n"
-        "✅ YouTube • Instagram • TikTok • Twitter • Facebook\n\n"
+        f"👋 أهلاً {update.effective_user.first_name}!\n\n"
+        "🎬 أرسل رابط أي فيديو وسأنزله لك!\n"
+        "✅ YouTube • TikTok • Instagram • Twitter\n"
         "⚠️ الحد الأقصى: 50MB",
         parse_mode=ParseMode.MARKDOWN,
     )
 
 
-async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🟢 البوت يعمل!")
 
 
-async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-
     if not is_valid_url(url):
-        await update.message.reply_text("❌ أرسل رابطاً صحيحاً يبدأ بـ http://")
+        await update.message.reply_text("❌ أرسل رابطاً يبدأ بـ http://")
         return
 
-    status_msg = await update.message.reply_text("⏳ جاري التنزيل...")
-
-    output_template = os.path.join(DOWNLOAD_DIR, "%(title).50s.%(ext)s")
+    status = await update.message.reply_text("⏳ جاري التنزيل...")
+    output = os.path.join(DOWNLOAD_DIR, "%(title).40s.%(ext)s")
     ydl_opts = {
-        "outtmpl": output_template,
+        "outtmpl": output,
         "format": "best[filesize<45M]/best",
         "quiet": True,
         "no_warnings": True,
         "merge_output_format": "mp4",
-        "socket_timeout": 30,
         "retries": 3,
     }
 
-    downloaded_file = None
-
+    filepath = None
     try:
-        import asyncio
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
-        def do_download():
+        def do_dl():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 return ydl.prepare_filename(info)
 
-        downloaded_file = await loop.run_in_executor(None, do_download)
+        filepath = await loop.run_in_executor(None, do_dl)
 
-        if not os.path.exists(downloaded_file):
-            base = os.path.splitext(downloaded_file)[0]
-            for ext in [".mp4", ".mkv", ".webm", ".avi"]:
+        if not os.path.exists(filepath):
+            base = os.path.splitext(filepath)[0]
+            for ext in [".mp4", ".mkv", ".webm"]:
                 if os.path.exists(base + ext):
-                    downloaded_file = base + ext
+                    filepath = base + ext
                     break
 
-        if not downloaded_file or not os.path.exists(downloaded_file):
-            raise FileNotFoundError("الملف لم يوجد")
-
-        file_size_mb = os.path.getsize(downloaded_file) / (1024 * 1024)
-        if file_size_mb > MAX_FILE_SIZE_MB:
-            await status_msg.edit_text(
-                f"⚠️ الفيديو كبير جداً ({file_size_mb:.1f}MB)\nالحد: {MAX_FILE_SIZE_MB}MB"
-            )
+        size_mb = os.path.getsize(filepath) / 1024 / 1024
+        if size_mb > 50:
+            await status.edit_text(f"⚠️ الفيديو كبير ({size_mb:.1f}MB) - الحد 50MB")
             return
 
-        await status_msg.edit_text("📤 جاري الإرسال...")
-        with open(downloaded_file, "rb") as vf:
-            await update.message.reply_video(
-                video=vf,
-                supports_streaming=True,
-                caption="✅ تم! 🎬",
-                read_timeout=120,
-                write_timeout=120,
-            )
-        await status_msg.delete()
+        await status.edit_text("📤 جاري الإرسال...")
+        with open(filepath, "rb") as f:
+            await update.message.reply_video(video=f, caption="✅ تم! 🎬",
+                supports_streaming=True, read_timeout=120, write_timeout=120)
+        await status.delete()
 
     except Exception as e:
         err = str(e).lower()
-        if "private" in err:
-            msg = "🔒 الفيديو خاص"
-        elif "unavailable" in err:
-            msg = "⛔ الفيديو غير متاح"
-        else:
-            msg = "❌ فشل التنزيل! تأكد أن الرابط صحيح والفيديو عام"
-        await status_msg.edit_text(msg)
-        logger.error(f"Error: {e}")
-
+        msg = "🔒 خاص" if "private" in err else "⛔ غير متاح" if "unavailable" in err else "❌ فشل التنزيل"
+        await status.edit_text(msg)
+        logger.error(e)
     finally:
-        if downloaded_file and os.path.exists(downloaded_file):
-            try:
-                os.remove(downloaded_file)
-            except Exception:
-                pass
+        if filepath and os.path.exists(filepath):
+            os.remove(filepath)
+
+
+async def run_bot():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_video))
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    logger.info("Bot polling started")
+    # Keep running forever
+    await asyncio.Event().wait()
 
 
 def main():
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN غير موجود!")
 
-    # تشغيل web server في thread منفصل
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
-    logger.info(f"Web server running on port {PORT}")
+    # Start web server in background thread
+    threading.Thread(
+        target=lambda: HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever(),
+        daemon=True
+    ).start()
+    logger.info(f"Web server on port {PORT}")
 
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_video))
-
-    logger.info("البوت يعمل...")
-    app.run_polling(drop_pending_updates=True)
+    asyncio.run(run_bot())
 
 
 if __name__ == "__main__":
