@@ -37,8 +37,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 أهلاً {update.effective_user.first_name}!\n\n"
         "🎬 أرسل رابط أي فيديو وسأنزله لك!\n"
         "✅ YouTube • TikTok • Instagram • Twitter\n"
-        "⚠️ الحد الأقصى: 50MB",
-        parse_mode=ParseMode.MARKDOWN,
+        "⚠️ الحد الأقصى: 50MB"
     )
 
 
@@ -88,13 +87,18 @@ async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await status.edit_text("📤 جاري الإرسال...")
         with open(filepath, "rb") as f:
-            await update.message.reply_video(video=f, caption="✅ تم! 🎬",
-                supports_streaming=True, read_timeout=120, write_timeout=120)
+            await update.message.reply_video(
+                video=f, caption="✅ تم! 🎬",
+                supports_streaming=True,
+                read_timeout=120, write_timeout=120
+            )
         await status.delete()
 
     except Exception as e:
         err = str(e).lower()
-        msg = "🔒 خاص" if "private" in err else "⛔ غير متاح" if "unavailable" in err else "❌ فشل التنزيل"
+        msg = ("🔒 الفيديو خاص" if "private" in err
+               else "⛔ الفيديو غير متاح" if "unavailable" in err
+               else "❌ فشل التنزيل! تأكد أن الرابط صحيح")
         await status.edit_text(msg)
         logger.error(e)
     finally:
@@ -102,31 +106,23 @@ async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             os.remove(filepath)
 
 
-async def run_bot():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_video))
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
-    logger.info("Bot polling started")
-    # Keep running forever
-    await asyncio.Event().wait()
-
-
 def main():
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN غير موجود!")
 
-    # Start web server in background thread
     threading.Thread(
         target=lambda: HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever(),
         daemon=True
     ).start()
     logger.info(f"Web server on port {PORT}")
 
-    asyncio.run(run_bot())
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_video))
+
+    logger.info("البوت يعمل...")
+    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
