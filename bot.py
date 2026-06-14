@@ -201,4 +201,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
