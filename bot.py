@@ -185,7 +185,7 @@ async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 pass
 
 
-def main() -> None:
+async def main() -> None:
     if not BOT_TOKEN:
         raise ValueError("❌ BOT_TOKEN غير موجود! أضفه في متغيرات البيئة")
 
